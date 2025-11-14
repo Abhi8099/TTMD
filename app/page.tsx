@@ -1,244 +1,446 @@
 'use client';
 
 import { useChat } from '@ai-sdk/react';
-import { useState } from 'react';
+import React, { useCallback, useMemo, useState, FormEvent } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+
+type ToolPart = {
+  type: 'tool-db' | 'tool-schema';
+  [key: string]: any;
+};
+
+type MessagePart =
+  | { type: 'text'; text: string }
+  | ToolPart;
+
+type ChatMessage = {
+  id: string;
+  role: 'user' | 'assistant' | string;
+  parts: MessagePart[];
+};
+
+const messageCardVariants:any = {
+  hidden: {
+    opacity: 0,
+    y: 8,
+    filter: 'blur(8px)',
+  },
+  visible: (index: number) => ({
+    opacity: 1,
+    y: 0,
+    filter: 'blur(0px)',
+    transition: {
+      duration: 0.35,
+      delay: index * 0.04,
+      ease: 'easeOut',
+    },
+  }),
+  exit: {
+    opacity: 0,
+    y: -6,
+    filter: 'blur(4px)',
+    transition: {
+      duration: 0.25,
+      ease: 'easeInOut',
+    },
+  },
+};
+
+const loaderVariants:any = {
+  hidden: { opacity: 0, y: 8, filter: 'blur(6px)' },
+  visible: {
+    opacity: 1,
+    y: 0,
+    filter: 'blur(0px)',
+    transition: { duration: 0.3, ease: 'easeOut' },
+  },
+  exit: {
+    opacity: 0,
+    y: 8,
+    filter: 'blur(4px)',
+    transition: { duration: 0.2, ease: 'easeIn' },
+  },
+};
+
+interface ToolAccordionProps {
+  id: string;
+  title: string;
+  subtitle?: string;
+  data: unknown;
+  isOpen: boolean;
+  onToggle: () => void;
+}
+
+/**
+ * Small inline chevron icon with rotation animation.
+ */
+const ChevronIcon: React.FC<{ open: boolean }> = ({ open }) => (
+  <motion.span
+    initial={false}
+    animate={{ rotate: open ? 180 : 0 }}
+    transition={{ duration: 0.2, ease: 'easeOut' }}
+    className="ml-2 inline-flex text-slate-400"
+  >
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className="block"
+    >
+      <path
+        d="M6 9l6 6 6-6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  </motion.span>
+);
+
+/**
+ * Simple circular icon for tool type.
+ */
+const ToolBadgeIcon: React.FC = () => (
+  <span className="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-sky-100 text-sky-600 text-xs font-semibold">
+    T
+  </span>
+);
+
+const ToolAccordion: React.FC<ToolAccordionProps> = ({
+  id,
+  title,
+  subtitle,
+  data,
+  isOpen,
+  onToggle,
+}) => {
+  return (
+    <div
+      className="overflow-hidden rounded-xl border border-sky-100 bg-sky-50/70 shadow-sm backdrop-blur-sm"
+      key={id}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-sky-100/80 cursor-pointer"
+      >
+        <div className="flex items-center">
+          <ToolBadgeIcon />
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold text-slate-800">
+              {title}
+            </span>
+            {subtitle && (
+              <span className="mt-0.5 text-xs font-medium text-slate-500">
+                {subtitle}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full bg-white/80 px-2 py-0.5 text-[11px] font-medium text-sky-700 shadow-sm">
+            View details
+          </span>
+          <ChevronIcon open={isOpen} />
+        </div>
+      </button>
+
+      <AnimatePresence initial={false}>
+        {isOpen && (
+          <motion.div
+            key={`${id}-content`}
+            initial={{ height: 0, opacity: 0, filter: 'blur(4px)' }}
+            animate={{
+              height: 'auto',
+              opacity: 1,
+              filter: 'blur(0px)',
+            }}
+            exit={{
+              height: 0,
+              opacity: 0,
+              filter: 'blur(3px)',
+            }}
+            transition={{
+              duration: 0.3,
+              ease: 'easeInOut',
+            }}
+          >
+            <div className="border-t border-sky-100 bg-white/80 px-4 py-3">
+              <motion.pre
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.25, ease: 'easeOut' }}
+                className="max-h-64 overflow-auto rounded-lg bg-slate-900/5 p-3 text-[11px] leading-relaxed text-slate-800 font-mono"
+              >
+                {JSON.stringify(data, null, 2)}
+              </motion.pre>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
 
 export default function Chat() {
   const [input, setInput] = useState('');
-  const { messages, sendMessage, status } = useChat();
+  const [accordionState, setAccordionState] = useState<Record<string, boolean>>(
+    {},
+  );
 
-  const isStreaming =
-    status === 'submitted' || status === 'streaming';
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const value = input.trim();
-    if (!value) return;
-    sendMessage({ text: value });
-    setInput('');
+  const { messages, sendMessage, isLoading } = useChat() as {
+    messages: ChatMessage[];
+    sendMessage: (opts: { text: string }) => Promise<void> | void;
+    isLoading?: boolean;
   };
 
+  const handleSubmit = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault();
+      const trimmed = input.trim();
+      if (!trimmed) return;
+      await sendMessage({ text: trimmed });
+      setInput('');
+    },
+    [input, sendMessage],
+  );
+
+  const toggleAccordion = useCallback((key: string) => {
+    setAccordionState(prev => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  }, []);
+
+  const hasMessages = useMemo(() => messages && messages.length > 0, [messages]);
+
   return (
-    <div className="min-h-screen w-full bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900 text-slate-50">
-      <div className="flex flex-col w-full max-w-2xl mx-auto px-4 py-10 md:py-16">
-        {/* Shell / Card */}
-        <motion.div
-          className="relative flex flex-col rounded-3xl border border-slate-800/80 bg-slate-900/70 shadow-[0_18px_45px_rgba(0,0,0,0.7)] backdrop-blur-md overflow-hidden"
-          initial={{ opacity: 0, y: 18, filter: 'blur(10px)' }}
-          whileInView={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+    <div className="min-h-screen bg-slate-50/80 py-10 px-4">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+        {/* Header */}
+        <motion.header
+          initial={{ opacity: 0, y: -10, filter: 'blur(6px)' }}
+          whileInView={{
+            opacity: 1,
+            y: 0,
+            filter: 'blur(0px)',
+          }}
           viewport={{ once: true, amount: 0.4 }}
-          transition={{ duration: 0.45, ease: 'easeOut' }}
+          transition={{ duration: 0.4, ease: 'easeOut' }}
+          className="mb-1 rounded-2xl border border-sky-100 bg-gradient-to-r from-sky-50 via-white to-cyan-50/80 px-6 py-5 shadow-sm backdrop-blur-sm"
         >
-          {/* Subtle gradient overlay */}
-          <div className="pointer-events-none absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-sky-500/15 via-slate-900/0 to-transparent" />
-
-          {/* Header */}
-          <div className="relative flex items-center justify-between px-5 py-4 border-b border-slate-800/80">
-            <div className="flex items-center gap-3">
-              {/* Branded icon block */}
-              <motion.div
-                className="flex h-9 w-9 items-center justify-center rounded-2xl border border-sky-500/40 bg-sky-500/10 shadow-inner"
-                initial={{ opacity: 0, scale: 0.8, filter: 'blur(6px)' }}
-                animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
-                transition={{ duration: 0.28, ease: 'easeOut' }}
-              >
-                <svg
-                  viewBox="0 0 32 32"
-                  className="h-5 w-5 text-sky-400"
-                  aria-hidden="true"
-                >
-                  <defs>
-                    <linearGradient
-                      id="chat-icon-grad"
-                      x1="0"
-                      y1="0"
-                      x2="1"
-                      y2="1"
-                    >
-                      <stop offset="0%" stopColor="#38BDF8" />
-                      <stop offset="100%" stopColor="#0EA5E9" />
-                    </linearGradient>
-                  </defs>
-                  <rect
-                    x="3"
-                    y="3"
-                    width="26"
-                    height="22"
-                    rx="5"
-                    fill="url(#chat-icon-grad)"
-                    opacity="0.95"
-                  />
-                  <rect x="8" y="9" width="16" height="2" rx="1" fill="#0B1120" />
-                  <rect x="8" y="14" width="10" height="2" rx="1" fill="#0B1120" />
-                  <path
-                    d="M14 25c2.5 0 4.4-.8 5.7-2.3L25 25l-1.5-3.9"
-                    stroke="#0B1120"
-                    strokeWidth="1.4"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    opacity="0.9"
-                  />
-                </svg>
-              </motion.div>
-
-              <div className="space-y-0.5">
-                <div className="text-sm font-medium tracking-[0.18em] uppercase text-slate-300/80">
-                  Conversation
-                </div>
-                <div className="text-base font-semibold text-slate-50">
-                  AI Assistant
-                </div>
-              </div>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h1 className="text-base font-semibold tracking-tight text-slate-900">
+                Talk To My Database
+              </h1>
+              <p className="mt-1 text-sm text-slate-500">
+                Ask questions and explore tool responses via collapsible,
+                animated accordions.
+              </p>
             </div>
-
-            <div className="flex items-center gap-2 text-[11px]">
-              <span className="rounded-full border border-slate-700/80 bg-slate-900/80 px-2.5 py-1 text-[11px] text-slate-300/90 tracking-[0.14em] uppercase">
-                Session
-              </span>
-              <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[10px] font-medium text-emerald-300 tracking-[0.16em] uppercase">
-                {isStreaming ? 'Responding' : 'Ready'}
+            <div className="hidden md:flex items-center gap-2 rounded-xl bg-white/80 px-3 py-2 shadow-sm border border-slate-100">
+              <span className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.25)]" />
+              <span className="text-xs font-medium text-slate-600">
+                Ready to respond
               </span>
             </div>
           </div>
+        </motion.header>
 
-          {/* Messages area */}
-          <div className="relative flex flex-col px-5 pt-4 pb-24 md:pb-28 space-y-3 overflow-y-auto max-h-[70vh]">
-            {/* Empty state with animated skeleton */}
-            {messages.length === 0 && !isStreaming && (
-              <motion.div
-                className="mt-1 rounded-2xl border border-slate-800/80 bg-slate-900/80 p-5 backdrop-blur-sm shadow-inner"
-                initial={{ opacity: 0, y: 10, filter: 'blur(8px)' }}
-                animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-                transition={{ duration: 0.35, ease: 'easeOut' }}
-              >
-                <div className="animate-pulse space-y-3">
-                  <div className="h-3.5 w-28 rounded-full bg-slate-800/80" />
-                  <div className="h-4 w-3/4 rounded bg-slate-800/80" />
-                  <div className="h-4 w-2/3 rounded bg-slate-800/70" />
-                </div>
-                <div className="mt-4 text-xs text-slate-400">
-                  Ask a question, paste some text, or describe a task. The model
-                  will respond here.
-                </div>
-              </motion.div>
-            )}
-
-            {/* Messages list with motion */}
+        {/* Chat panel */}
+        <motion.section
+          initial={{ opacity: 0, y: 8, filter: 'blur(8px)' }}
+          whileInView={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+          viewport={{ once: true, amount: 0.3 }}
+          transition={{ duration: 0.4, ease: 'easeOut' }}
+          className="flex flex-col rounded-2xl border border-slate-100 bg-white/90 shadow-[0_18px_40px_rgba(15,23,42,0.04)] backdrop-blur-md"
+        >
+          {/* Messages */}
+          <div className="flex-1 space-y-3 overflow-y-auto px-4 pb-4 pt-5 max-h-[60vh]">
             <AnimatePresence initial={false}>
-              {messages.map((message, index) => {
-                const isUser = message.role === 'user';
+              {hasMessages ? (
+                messages.map((message, index) => {
+                  const isUser = message.role === 'user';
+                  const keyBase = message.id;
 
-                return (
-                  <motion.div
-                    key={message.id}
-                    layout
-                    className={`flex ${
-                      isUser ? 'justify-end' : 'justify-start'
-                    }`}
-                    initial={{
-                      opacity: 0,
-                      y: 10,
-                      filter: 'blur(7px)',
-                    }}
-                    animate={{
-                      opacity: 1,
-                      y: 0,
-                      filter: 'blur(0px)',
-                    }}
-                    exit={{
-                      opacity: 0,
-                      y: -6,
-                      filter: 'blur(6px)',
-                    }}
-                    transition={{
-                      duration: 0.25,
-                      ease: 'easeOut',
-                      delay: Math.min(index * 0.04, 0.28),
-                    }}
-                  >
-                    <div
-                      className={`max-w-[82%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm backdrop-blur-sm border ${
-                        isUser
-                          ? 'bg-sky-500/95 text-slate-50 border-sky-400/80'
-                          : 'bg-slate-900/85 text-slate-50 border-slate-800/90'
+                  return (
+                    <motion.div
+                      key={message.id}
+                      layout
+                      initial="hidden"
+                      animate="visible"
+                      exit="exit"
+                      variants={messageCardVariants}
+                      custom={index}
+                      className={`flex w-full ${
+                        isUser ? 'justify-end' : 'justify-start'
                       }`}
                     >
                       <div
-                        className={`mb-1 text-[11px] font-medium tracking-[0.16em] uppercase ${
+                        className={`max-w-[80%] rounded-2xl border px-4 py-3 shadow-sm backdrop-blur-sm ${
                           isUser
-                            ? 'text-sky-100/80'
-                            : 'text-slate-400/90'
+                            ? 'border-sky-100 bg-sky-50/80 text-slate-900'
+                            : 'border-slate-100 bg-slate-50/80 text-slate-900'
                         }`}
                       >
-                        {isUser ? 'You' : 'Assistant'}
-                      </div>
+                        <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
+                          {isUser ? 'You' : 'Assistant'}
+                        </div>
 
-                      <div className="space-y-2">
-                        {(message.parts ?? []).map((part: any, i: number) => {
-                          switch (part.type) {
-                            case 'text':
-                              return (
-                                <div key={`${message.id}-${i}`} className="whitespace-pre-wrap">
-                                  {part.text}
-                                </div>
-                              );
-                            case 'tool-db':
-                            case 'tool-schema':
-                              return (
-                                <motion.pre
-                                  key={`${message.id}-${i}`}
-                                  className="mt-1 max-h-64 overflow-auto rounded-xl border border-slate-800/90 bg-slate-950/80 p-3 text-[11px] text-slate-300/90"
-                                  initial={{ opacity: 0, y: 6, filter: 'blur(6px)' }}
-                                  animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-                                  transition={{ duration: 0.25, ease: 'easeOut' }}
-                                >
-                                  {JSON.stringify(part, null, 2)}
-                                </motion.pre>
-                              );
-                            default:
-                              return null;
-                          }
-                        })}
+                        <div className="space-y-3">
+{message.parts.map((part, idx) => {
+  const compositeId = `${keyBase}-${idx}`;
+  const partType = (part as any).type;
+
+  // 1) Hide internal step metadata so it never shows in the UI
+  if (
+    typeof partType === "string" &&
+    (partType.startsWith("step-") || partType === "tool-input-available")
+  ) {
+    return null;
+  }
+
+  // 2) Show tool errors nicely in the UI
+  if (partType === "tool-output-error") {
+    const errorText =
+      (part as any).errorText ||
+      "An error occurred while executing the database tool.";
+
+    return (
+      <motion.div
+        key={compositeId}
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+        className="mt-1 rounded-xl border border-red-100 bg-red-50/90 px-3 py-2 text-xs text-red-700"
+      >
+        <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-red-500">
+          Tool error
+        </div>
+        <div className="mt-1 whitespace-pre-wrap">
+          {errorText}
+        </div>
+      </motion.div>
+    );
+  }
+
+  // 3) Normal text parts
+  if (part.type === "text") {
+    return (
+      <motion.p
+        key={compositeId}
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{
+          duration: 0.25,
+          ease: "easeOut",
+          delay: idx * 0.02,
+        }}
+        className="whitespace-pre-wrap text-sm leading-relaxed text-slate-800"
+      >
+        {(part as any).text}
+      </motion.p>
+    );
+  }
+
+  // 4) Tool responses -> animated accordions (schema/db tools)
+  if (part.type === "tool-db" || part.type === "tool-schema") {
+    const title =
+      part.type === "tool-db"
+        ? "Database Tool Response"
+        : "Schema Tool Response";
+
+    const subtitle =
+      part.type === "tool-db"
+        ? "Structured data returned from database tool."
+        : "Schema inspection / generation details.";
+
+    return (
+      <ToolAccordion
+        key={compositeId}
+        id={compositeId}
+        title={title}
+        subtitle={subtitle}
+        data={part}
+        isOpen={!!accordionState[compositeId]}
+        onToggle={() => toggleAccordion(compositeId)}
+      />
+    );
+  }
+
+  // 5) Fallback for any truly unknown part types (kept for debugging)
+  return (
+    <motion.pre
+      key={compositeId}
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: "easeOut" }}
+      className="max-h-64 overflow-auto rounded-lg bg-slate-900/5 p-3 text-[11px] leading-relaxed text-slate-800 font-mono"
+    >
+      {JSON.stringify(part, null, 2)}
+    </motion.pre>
+  );
+})}
+
+                        </div>
                       </div>
-                    </div>
-                  </motion.div>
-                );
-              })}
+                    </motion.div>
+                  );
+                })
+              ) : (
+                <motion.div
+                  key="empty-state"
+                  initial={{ opacity: 0, y: 4, filter: 'blur(4px)' }}
+                  animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                  exit={{ opacity: 0, y: 4, filter: 'blur(3px)' }}
+                  transition={{ duration: 0.3, ease: 'easeOut' }}
+                  className="flex h-40 items-center justify-center"
+                >
+                  <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-4 py-6 text-center">
+                    <p className="text-sm font-medium text-slate-700">
+                      Start a conversation to see tool responses in animated accordions.
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Ask a question or run a tool. Results will appear as collapsible,
+                      interactive cards.
+                    </p>
+                  </div>
+                </motion.div>
+              )}
             </AnimatePresence>
 
-            {/* Streaming loader */}
+            {/* Animated loader when tool/chat is working */}
             <AnimatePresence>
-              {isStreaming && (
+              {isLoading && (
                 <motion.div
-                  className="flex justify-start mt-1"
-                  initial={{ opacity: 0, y: 6, filter: 'blur(6px)' }}
-                  animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-                  exit={{ opacity: 0, y: 6, filter: 'blur(6px)' }}
-                  transition={{ duration: 0.22, ease: 'easeOut' }}
+                  key="loader"
+                  variants={loaderVariants}
+                  initial="hidden"
+                  animate="visible"
+                  exit="exit"
+                  className="flex justify-start"
                 >
-                  <div className="inline-flex items-center gap-2 rounded-full border border-slate-800/80 bg-slate-950/80 px-3 py-1.5 text-[11px] text-slate-300/90 shadow-sm backdrop-blur">
-                    <span className="tracking-[0.16em] uppercase text-slate-400/90">
-                      Thinking
-                    </span>
-                    <div className="inline-flex items-center gap-1.5">
-                      {[0, 1, 2].map((d) => (
-                        <motion.span
-                          key={d}
-                          className="h-1.5 w-1.5 rounded-full bg-sky-400/90"
-                          animate={{
-                            opacity: [0.25, 1, 0.25],
-                            scale: [0.9, 1.1, 0.9],
-                            filter: ['blur(0px)', 'blur(1px)', 'blur(0px)'],
-                          }}
-                          transition={{
-                            duration: 1,
-                            repeat: Infinity,
-                            ease: 'easeInOut',
-                            delay: d * 0.16,
-                          }}
-                        />
-                      ))}
+                  <div className="flex max-w-[70%] flex-col gap-2 rounded-2xl border border-sky-100 bg-sky-50/70 p-3 shadow-sm backdrop-blur-sm">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-sky-600">
+                      Working
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex h-2 w-2 rounded-full bg-sky-500 animate-pulse" />
+                        <span className="text-xs text-slate-600">
+                          Analysing your request and preparing tool output…
+                        </span>
+                      </div>
+                      <div className="mt-1 grid grid-cols-3 gap-2">
+                        <div className="h-10 rounded-xl bg-white/80 shadow-sm animate-pulse" />
+                        <div className="h-10 rounded-xl bg-white/70 shadow-sm animate-pulse" />
+                        <div className="h-10 rounded-xl bg-white/60 shadow-sm animate-pulse" />
+                      </div>
                     </div>
                   </div>
                 </motion.div>
@@ -246,36 +448,39 @@ export default function Chat() {
             </AnimatePresence>
           </div>
 
-          {/* Input bar */}
-          <motion.form
-            onSubmit={handleSubmit}
-            className="sticky bottom-0 flex items-center gap-2 border-t border-slate-800/80 bg-slate-950/95 px-5 py-3 backdrop-blur"
-            initial={{ opacity: 0, y: 12, filter: 'blur(8px)' }}
-            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-            transition={{ duration: 0.35, ease: 'easeOut' }}
-          >
-            <div className="relative flex-1">
-              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_0_3px_rgba(16,185,129,0.3)]" />
-              </div>
-              <input
-                className="block w-full rounded-2xl border border-slate-700/80 bg-slate-950/90 px-8 py-2.5 text-sm text-slate-50 placeholder:text-slate-500 outline-none transition focus:border-sky-400 focus:ring-1 focus:ring-sky-500/80"
-                value={input}
-                placeholder="Type your message and press Enter…"
-                onChange={e => setInput(e.currentTarget.value)}
-              />
-            </div>
-
-            <motion.button
-              type="submit"
-              className="inline-flex items-center justify-center rounded-2xl border border-sky-500/70 bg-sky-500/90 px-3.5 py-2 text-xs font-medium text-slate-50 tracking-[0.16em] uppercase shadow-md hover:bg-sky-400 transition cursor-pointer"
-              whileHover={{ y: -1, filter: 'blur(0px)' }}
-              whileTap={{ scale: 0.96 }}
+          {/* Input */}
+          <div className="border-t border-slate-100 bg-slate-50/80 px-4 py-3 rounded-b-2xl">
+            <form
+              onSubmit={handleSubmit}
+              className="flex items-center gap-2"
             >
-              Send
-            </motion.button>
-          </motion.form>
-        </motion.div>
+              <div className="relative flex-1">
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true, amount: 0.4 }}
+                  transition={{ duration: 0.3, ease: 'easeOut' }}
+                  className="flex items-center rounded-xl border border-slate-200 bg-white/90 px-3 py-2 shadow-sm focus-within:border-sky-400 focus-within:ring-2 focus-within:ring-sky-100"
+                >
+                  <input
+                    className="w-full border-none bg-transparent text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-0"
+                    value={input}
+                    placeholder="Ask something or run a tool…"
+                    onChange={e => setInput(e.currentTarget.value)}
+                  />
+                </motion.div>
+              </div>
+              <motion.button
+                type="submit"
+                disabled={!input.trim()}
+                whileTap={{ scale: 0.97, filter: 'blur(0px)' }}
+                className="inline-flex h-10 items-center justify-center rounded-xl bg-sky-600 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-sky-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-100 cursor-pointer"
+              >
+                Send
+              </motion.button>
+            </form>
+          </div>
+        </motion.section>
       </div>
     </div>
   );
