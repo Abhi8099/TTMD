@@ -192,6 +192,7 @@ export default function Chat() {
     {},
   );
 
+const [isSending, setIsSending] = useState(false);
   const { messages, sendMessage, isLoading } = useChat() as {
     messages: ChatMessage[];
     sendMessage: (opts: { text: string }) => Promise<void> | void;
@@ -203,8 +204,10 @@ export default function Chat() {
       e.preventDefault();
       const trimmed = input.trim();
       if (!trimmed) return;
+      setIsSending(true);
       await sendMessage({ text: trimmed });
       setInput('');
+      setIsSending(false);
     },
     [input, sendMessage],
   );
@@ -219,7 +222,7 @@ export default function Chat() {
   const hasMessages = useMemo(() => messages && messages.length > 0, [messages]);
 
   return (
-    <div className="min-h-screen bg-slate-50/80 py-10 px-4">
+    <div className="min-h-screen bg-white/97 py-10 px-4">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
         {/* Header */}
         <motion.header
@@ -416,7 +419,7 @@ export default function Chat() {
 
             {/* Animated loader when tool/chat is working */}
             <AnimatePresence>
-              {isLoading && (
+              {(isSending  ||isLoading) && (
                 <motion.div
                   key="loader"
                   variants={loaderVariants}
@@ -435,11 +438,6 @@ export default function Chat() {
                         <span className="text-xs text-slate-600">
                           Analysing your request and preparing tool output…
                         </span>
-                      </div>
-                      <div className="mt-1 grid grid-cols-3 gap-2">
-                        <div className="h-10 rounded-xl bg-white/80 shadow-sm animate-pulse" />
-                        <div className="h-10 rounded-xl bg-white/70 shadow-sm animate-pulse" />
-                        <div className="h-10 rounded-xl bg-white/60 shadow-sm animate-pulse" />
                       </div>
                     </div>
                   </div>
