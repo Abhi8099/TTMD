@@ -1,7 +1,7 @@
 'use client';
 
 import { useChat } from '@ai-sdk/react';
-import React, { useCallback, useMemo, useState, FormEvent } from 'react';
+import React, { useCallback, useMemo, useState, FormEvent, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 
 type ToolPart = {
@@ -19,7 +19,7 @@ type ChatMessage = {
   parts: MessagePart[];
 };
 
-const messageCardVariants:any = {
+const messageCardVariants: any = {
   hidden: {
     opacity: 0,
     y: 8,
@@ -46,7 +46,7 @@ const messageCardVariants:any = {
   },
 };
 
-const loaderVariants:any = {
+const loaderVariants: any = {
   hidden: { opacity: 0, y: 8, filter: 'blur(6px)' },
   visible: {
     opacity: 1,
@@ -71,9 +71,7 @@ interface ToolAccordionProps {
   onToggle: () => void;
 }
 
-/**
- * Small inline chevron icon with rotation animation.
- */
+
 const ChevronIcon: React.FC<{ open: boolean }> = ({ open }) => (
   <motion.span
     initial={false}
@@ -100,9 +98,7 @@ const ChevronIcon: React.FC<{ open: boolean }> = ({ open }) => (
   </motion.span>
 );
 
-/**
- * Simple circular icon for tool type.
- */
+
 const ToolBadgeIcon: React.FC = () => (
   <span className="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-sky-100 text-sky-600 text-xs font-semibold">
     T
@@ -192,7 +188,7 @@ export default function Chat() {
     {},
   );
 
-const [isSending, setIsSending] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const { messages, sendMessage, isLoading } = useChat() as {
     messages: ChatMessage[];
     sendMessage: (opts: { text: string }) => Promise<void> | void;
@@ -220,6 +216,29 @@ const [isSending, setIsSending] = useState(false);
   }, []);
 
   const hasMessages = useMemo(() => messages && messages.length > 0, [messages]);
+
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const scrollToBottom = useCallback(
+    (behavior: ScrollBehavior = 'smooth') => {
+      const el = messagesContainerRef.current;
+      if (!el) return;
+      el.scrollTop = el.scrollHeight;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!messages || messages.length === 0) return;
+    scrollToBottom(messages.length <= 3 ? 'auto' : 'smooth');
+  }, [messages, scrollToBottom]);
+
+  useEffect(() => {
+    if (isSending || isLoading) {
+      scrollToBottom('auto');
+    }
+  }, [isSending, isLoading, scrollToBottom]);
+
 
   return (
     <div className="min-h-screen bg-white/97 py-10 px-4">
@@ -264,7 +283,9 @@ const [isSending, setIsSending] = useState(false);
           className="flex flex-col rounded-2xl border border-slate-100 bg-white/90 shadow-[0_18px_40px_rgba(15,23,42,0.04)] backdrop-blur-md"
         >
           {/* Messages */}
-          <div className="flex-1 space-y-3 overflow-y-auto px-4 pb-4 pt-5 max-h-[60vh]">
+          <div
+          ref={messagesContainerRef}
+          className="flex-1 space-y-3 overflow-y-auto px-4 pb-4 pt-5 max-h-[60vh]">
             <AnimatePresence initial={false}>
               {hasMessages ? (
                 messages.map((message, index) => {
@@ -280,115 +301,113 @@ const [isSending, setIsSending] = useState(false);
                       exit="exit"
                       variants={messageCardVariants}
                       custom={index}
-                      className={`flex w-full ${
-                        isUser ? 'justify-end' : 'justify-start'
-                      }`}
+                      className={`flex w-full ${isUser ? 'justify-end' : 'justify-start'
+                        }`}
                     >
                       <div
-                        className={`max-w-[80%] rounded-2xl border px-4 py-3 shadow-sm backdrop-blur-sm ${
-                          isUser
+                        className={`max-w-[80%] rounded-2xl border px-4 py-3 shadow-sm backdrop-blur-sm ${isUser
                             ? 'border-sky-100 bg-sky-50/80 text-slate-900'
                             : 'border-slate-100 bg-slate-50/80 text-slate-900'
-                        }`}
+                          }`}
                       >
                         <div className="mb-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-400">
                           {isUser ? 'You' : 'Assistant'}
                         </div>
 
                         <div className="space-y-3">
-{message.parts.map((part, idx) => {
-  const compositeId = `${keyBase}-${idx}`;
-  const partType = (part as any).type;
+                          {message.parts.map((part, idx) => {
+                            const compositeId = `${keyBase}-${idx}`;
+                            const partType = (part as any).type;
 
-  // 1) Hide internal step metadata so it never shows in the UI
-  if (
-    typeof partType === "string" &&
-    (partType.startsWith("step-") || partType === "tool-input-available")
-  ) {
-    return null;
-  }
+                            // 1) Hide internal step metadata so it never shows in the UI
+                            if (
+                              typeof partType === "string" &&
+                              (partType.startsWith("step-") || partType === "tool-input-available")
+                            ) {
+                              return null;
+                            }
 
-  // 2) Show tool errors nicely in the UI
-  if (partType === "tool-output-error") {
-    const errorText =
-      (part as any).errorText ||
-      "An error occurred while executing the database tool.";
+                            // 2) Show tool errors nicely in the UI
+                            if (partType === "tool-output-error") {
+                              const errorText =
+                                (part as any).errorText ||
+                                "An error occurred while executing the database tool.";
 
-    return (
-      <motion.div
-        key={compositeId}
-        initial={{ opacity: 0, y: 4 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.2, ease: "easeOut" }}
-        className="mt-1 rounded-xl border border-red-100 bg-red-50/90 px-3 py-2 text-xs text-red-700"
-      >
-        <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-red-500">
-          Tool error
-        </div>
-        <div className="mt-1 whitespace-pre-wrap">
-          {errorText}
-        </div>
-      </motion.div>
-    );
-  }
+                              return (
+                                <motion.div
+                                  key={compositeId}
+                                  initial={{ opacity: 0, y: 4 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{ duration: 0.2, ease: "easeOut" }}
+                                  className="mt-1 rounded-xl border border-red-100 bg-red-50/90 px-3 py-2 text-xs text-red-700"
+                                >
+                                  <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-red-500">
+                                    Tool error
+                                  </div>
+                                  <div className="mt-1 whitespace-pre-wrap">
+                                    {errorText}
+                                  </div>
+                                </motion.div>
+                              );
+                            }
 
-  // 3) Normal text parts
-  if (part.type === "text") {
-    return (
-      <motion.p
-        key={compositeId}
-        initial={{ opacity: 0, y: 4 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{
-          duration: 0.25,
-          ease: "easeOut",
-          delay: idx * 0.02,
-        }}
-        className="whitespace-pre-wrap text-sm leading-relaxed text-slate-800"
-      >
-        {(part as any).text}
-      </motion.p>
-    );
-  }
+                            // 3) Normal text parts
+                            if (part.type === "text") {
+                              return (
+                                <motion.p
+                                  key={compositeId}
+                                  initial={{ opacity: 0, y: 4 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{
+                                    duration: 0.25,
+                                    ease: "easeOut",
+                                    delay: idx * 0.02,
+                                  }}
+                                  className="whitespace-pre-wrap text-sm leading-relaxed text-slate-800"
+                                >
+                                  {(part as any).text}
+                                </motion.p>
+                              );
+                            }
 
-  // 4) Tool responses -> animated accordions (schema/db tools)
-  if (part.type === "tool-db" || part.type === "tool-schema") {
-    const title =
-      part.type === "tool-db"
-        ? "Database Tool Response"
-        : "Schema Tool Response";
+                            // 4) Tool responses -> animated accordions (schema/db tools)
+                            if (part.type === "tool-db" || part.type === "tool-schema") {
+                              const title =
+                                part.type === "tool-db"
+                                  ? "Database Tool Response"
+                                  : "Schema Tool Response";
 
-    const subtitle =
-      part.type === "tool-db"
-        ? "Structured data returned from database tool."
-        : "Schema inspection / generation details.";
+                              const subtitle =
+                                part.type === "tool-db"
+                                  ? "Structured data returned from database tool."
+                                  : "Schema inspection / generation details.";
 
-    return (
-      <ToolAccordion
-        key={compositeId}
-        id={compositeId}
-        title={title}
-        subtitle={subtitle}
-        data={part}
-        isOpen={!!accordionState[compositeId]}
-        onToggle={() => toggleAccordion(compositeId)}
-      />
-    );
-  }
+                              return (
+                                <ToolAccordion
+                                  key={compositeId}
+                                  id={compositeId}
+                                  title={title}
+                                  subtitle={subtitle}
+                                  data={part}
+                                  isOpen={!!accordionState[compositeId]}
+                                  onToggle={() => toggleAccordion(compositeId)}
+                                />
+                              );
+                            }
 
-  // 5) Fallback for any truly unknown part types (kept for debugging)
-  return (
-    <motion.pre
-      key={compositeId}
-      initial={{ opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25, ease: "easeOut" }}
-      className="max-h-64 overflow-auto rounded-lg bg-slate-900/5 p-3 text-[11px] leading-relaxed text-slate-800 font-mono"
-    >
-      {JSON.stringify(part, null, 2)}
-    </motion.pre>
-  );
-})}
+                            // 5) Fallback for any truly unknown part types (kept for debugging)
+                            return (
+                              <motion.pre
+                                key={compositeId}
+                                initial={{ opacity: 0, y: 4 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ duration: 0.25, ease: "easeOut" }}
+                                className="max-h-64 overflow-auto rounded-lg bg-slate-900/5 p-3 text-[11px] leading-relaxed text-slate-800 font-mono"
+                              >
+                                {JSON.stringify(part, null, 2)}
+                              </motion.pre>
+                            );
+                          })}
 
                         </div>
                       </div>
@@ -419,7 +438,7 @@ const [isSending, setIsSending] = useState(false);
 
             {/* Animated loader when tool/chat is working */}
             <AnimatePresence>
-              {(isSending  ||isLoading) && (
+              {(isSending || isLoading) && (
                 <motion.div
                   key="loader"
                   variants={loaderVariants}
